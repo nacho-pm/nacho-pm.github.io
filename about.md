@@ -3,4 +3,4 @@ layout: page
 title: About
 ---
 
-Something about me.
+Hola soy Ignacio y esta es my pagina web con 'github pages'
