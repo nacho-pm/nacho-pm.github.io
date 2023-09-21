@@ -101,9 +101,9 @@ analytics:
 
 # Site Author
 author:
-  name             : "Ignaci0 Peñalver"
+  name             : "Ignacio Peñalver"
   avatar           : #"/assets/images/avatar.png"
-  bio              : "Content about cibersecurity and more."
+  bio              : "Content about cibersecurity and articles about hacking (ethical hacking)."
   location         : "España"
   email            : "ignaciopm.contacto@gmail.com"
   uri              :
