@@ -1,8 +1,8 @@
 ---
 layout: single
-title: LS COLORS for your Linux terminal
-excerpt: "Ready was a pretty straighforward box to get an initial shell on: We identify that's it running a vulnerable instance of Gitlab and we use an exploit against version 11.4.7 to land a shell. Once inside, we quickly figure out we're in a container and by looking at the docker compose file we can see the container is running in privileged mode. We then mount the host filesystem within the container then we can access the flag or add our SSH keys to the host root user home directory."
-date: 2022-09-20
+title: Color for your 'ls' output
+excerpt: "If you want that after executing an 'ls' in your console, your folders and files look with color, copy what I leave you below in your terminal configuration file. That is to say if you have a bash, paste it in the '.bashrc' file and in case you have a zsh then in the '.zshrc' file."
+date: 2023-09-21
 classes: wide
 header:
   teaser: #/assets/images/
@@ -10,13 +10,12 @@ header:
   icon:
 categories:
   - Linux
-  - infosec
+  - Comandos terminal
 tags:
   - linux
-  - gitlab
+  - ls
   - consola
   - terminal
-  - privileged container
 ---
 
 
