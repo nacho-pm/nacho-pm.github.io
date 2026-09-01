@@ -449,6 +449,22 @@
   }
   state = freshState();
 
+  // ---- persistence: keep the game alive across a page refresh ----
+  const SAVE_KEY = '3denraya-save-v1';
+  function saveGame(){
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify({ state, mode, hintsOn })); }
+    catch(e){}
+  }
+  function loadGame(){
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data || !data.state || !data.state.pieces) return null;
+      return data;
+    } catch(e){ return null; }
+  }
+
   // ---- pure helpers: operate on an explicit position { pieces, turn, phase } ----
   // so the same rules can be replayed on hypothetical positions by the AI.
   function otherCellsOf(pos, exPlayer, exIndex){
@@ -858,6 +874,8 @@
     } else {
       overlayEl.classList.remove('show');
     }
+
+    saveGame();
   }
 
   document.getElementById('resetBtn').addEventListener('click', ()=>{
@@ -890,14 +908,28 @@
     viewportEl.classList.toggle('hints-off', !hintsOn);
     hintsBtn.textContent = hintsOn ? 'Ocultar pistas' : 'Mostrar pistas';
     hintsBtn.setAttribute('aria-pressed', String(hintsOn));
+    saveGame();
   }
   hintsBtn.addEventListener('click', ()=>{
     hintsOn = !hintsOn;
     applyHints();
   });
-  applyHints();
 
+  // restore a saved game (if any) before the first paint, so a plain page
+  // refresh mid-match continues instead of starting over
+  const saved = loadGame();
+  if (saved){
+    state = saved.state;
+    mode = saved.mode === 'ai' ? 'ai' : 'pvp';
+    hintsOn = saved.hintsOn !== false;
+  }
+  modePvpBtn.classList.toggle('active', mode==='pvp');
+  modePvpBtn.setAttribute('aria-pressed', String(mode==='pvp'));
+  modeAiBtn.classList.toggle('active', mode==='ai');
+  modeAiBtn.setAttribute('aria-pressed', String(mode==='ai'));
+  applyHints();
   render();
+  maybeTriggerAi();
 })();
 </script>
 </body>
