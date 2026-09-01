@@ -185,6 +185,34 @@
 
   .status-actions{ display:flex; gap:8px; flex-wrap:wrap; }
 
+  .mode-row{
+    display:inline-flex;
+    padding:3px;
+    background:var(--surface);
+    border:1px solid var(--grid-line);
+    border-radius:9px;
+    margin-bottom:16px;
+    box-shadow:var(--shadow);
+  }
+  .mode-btn{
+    font-family:'Work Sans', sans-serif;
+    font-size:13px;
+    font-weight:500;
+    color:var(--ink-soft);
+    background:transparent;
+    border:none;
+    border-radius:6px;
+    padding:7px 12px;
+    cursor:pointer;
+    transition:background .15s, color .15s;
+  }
+  .mode-btn.active{
+    background:var(--surface-2);
+    color:var(--ink);
+    box-shadow:0 1px 2px rgba(20,30,25,.1);
+  }
+  .mode-btn:focus-visible{ outline:2px solid var(--accent-gold); outline-offset:2px; }
+
   .board-card{
     background:var(--surface);
     border:1px solid var(--grid-line);
@@ -369,6 +397,11 @@
     </ol>
   </details>
 
+  <div class="mode-row" role="group" aria-label="Modo de juego">
+    <button class="mode-btn active" id="modePvpBtn" type="button" aria-pressed="true">2 jugadores</button>
+    <button class="mode-btn" id="modeAiBtn" type="button" aria-pressed="false">1 jugador · vs máquina</button>
+  </div>
+
   <div class="status-row">
     <div class="turn-pill" id="turnPill">
       <span class="turn-dot" id="turnDot"></span>
@@ -416,12 +449,14 @@
   }
   state = freshState();
 
-  function otherCells(exPlayer, exIndex){
+  // ---- pure helpers: operate on an explicit position { pieces, turn, phase } ----
+  // so the same rules can be replayed on hypothetical positions by the AI.
+  function otherCellsOf(pos, exPlayer, exIndex){
     const cells = [];
     ['X','O'].forEach(p=>{
-      state.pieces[p].forEach((pos,i)=>{
+      pos.pieces[p].forEach((c,i)=>{
         if (p===exPlayer && i===exIndex) return;
-        cells.push(pos);
+        cells.push(c);
       });
     });
     return cells;
@@ -431,8 +466,8 @@
 
   // Legality: only the COUNT of distinct rows / distinct columns in use matters,
   // never the numeric gap between them — empty rows/columns don't count at all.
-  function isLegal(r,c,exPlayer,exIndex){
-    const others = otherCells(exPlayer,exIndex);
+  function isLegalOf(pos, r,c,exPlayer,exIndex){
+    const others = otherCellsOf(pos, exPlayer,exIndex);
     if (isOccupied(r,c,others)) return false;
     const rows = distinctSorted(others.map(p=>p.r));
     const cols = distinctSorted(others.map(p=>p.c));
@@ -443,10 +478,10 @@
 
   // Win check happens on the *compacted* board: rank each piece by the order
   // of its row/column among all distinct occupied rows/columns.
-  function findWinLine(player){
-    const pts = state.pieces[player];
+  function findWinLineOf(pos, player){
+    const pts = pos.pieces[player];
     if (pts.length < 3) return null;
-    const all = otherCells(null,-1);
+    const all = otherCellsOf(pos, null,-1);
     const rows = distinctSorted(all.map(p=>p.r));
     const cols = distinctSorted(all.map(p=>p.c));
     const ranked = pts.map(p=>({r:rows.indexOf(p.r), c:cols.indexOf(p.c), orig:p}));
@@ -459,26 +494,38 @@
     return ok ? sorted.map(x=>x.orig) : null;
   }
 
+  // Every legal value a row/column can take: the existing distinct values
+  // (reuse) plus, while there's room (<3 distinct so far), one new value
+  // before the first, between each adjacent pair, and after the last.
+  function candidateValues(existing){
+    const vals = [...existing];
+    if (existing.length < 3){
+      if (existing.length === 0){
+        vals.push(0);
+      } else {
+        vals.push(existing[0]-1);
+        for (let i=0;i<existing.length-1;i++) vals.push((existing[i]+existing[i+1])/2);
+        vals.push(existing[existing.length-1]+1);
+      }
+    }
+    return vals;
+  }
+
+  // live-state wrappers used throughout the UI code below
+  function otherCells(exPlayer, exIndex){ return otherCellsOf(state, exPlayer, exIndex); }
+  function isLegal(r,c,exPlayer,exIndex){ return isLegalOf(state, r,c,exPlayer,exIndex); }
+  function findWinLine(player){ return findWinLineOf(state, player); }
+
   function totalPieces(){ return state.pieces.X.length + state.pieces.O.length; }
 
   // Lanes: the ordered set of row/column "slots" to render — existing occupied
   // values, plus (while actively choosing where to play) synthetic insertion
   // slots before/between/after them, whenever there's room (<3 distinct so far).
   function axisLanes(existing, withGaps){
-    const lanes = existing.map(v=>({type:'real', value:v}));
-    if (withGaps && existing.length < 3){
-      let gapVals;
-      if (existing.length === 0){
-        gapVals = [0];
-      } else {
-        gapVals = [existing[0]-1];
-        for (let i=0;i<existing.length-1;i++) gapVals.push((existing[i]+existing[i+1])/2);
-        gapVals.push(existing[existing.length-1]+1);
-      }
-      gapVals.forEach(v=> lanes.push({type:'gap', value:v}));
-    }
-    lanes.sort((a,b)=>a.value-b.value);
-    return lanes;
+    const vals = withGaps ? candidateValues(existing) : existing;
+    return vals
+      .map(v=>({type: existing.includes(v) ? 'real' : 'gap', value:v}))
+      .sort((a,b)=>a.value-b.value);
   }
   function withGhost(lanes, ghostValue){
     if (ghostValue==null || lanes.some(l=>l.value===ghostValue)) return lanes;
@@ -516,6 +563,132 @@
 
   function findLane(lanes, value){ return lanes.find(l=>l.value===value); }
 
+  // ---------- machine opponent ----------
+  const humanPlayer = 'X';
+  const AI_DEPTH = 3; // ply lookahead: AI move, opponent reply, AI reply
+  let mode = 'pvp'; // 'pvp' | 'ai'
+
+  function legalMovesFor(pos, player){
+    const moves = [];
+    if (pos.phase === 'placing'){
+      const others = otherCellsOf(pos, null, -1);
+      const rCands = candidateValues(distinctSorted(others.map(p=>p.r)));
+      const cCands = candidateValues(distinctSorted(others.map(p=>p.c)));
+      rCands.forEach(r=> cCands.forEach(c=>{
+        if (isLegalOf(pos,r,c,null,-1)) moves.push({type:'place', r, c});
+      }));
+    } else if (pos.phase === 'moving'){
+      for (let i=0;i<3;i++){
+        const self = pos.pieces[player][i];
+        const others = otherCellsOf(pos, player, i);
+        const rCands = candidateValues(distinctSorted(others.map(p=>p.r)));
+        const cCands = candidateValues(distinctSorted(others.map(p=>p.c)));
+        rCands.forEach(r=> cCands.forEach(c=>{
+          if (r===self.r && c===self.c) return;
+          if (isLegalOf(pos,r,c,player,i)) moves.push({type:'move', idx:i, r, c});
+        }));
+      }
+    }
+    return moves;
+  }
+
+  function applyMove(pos, player, move){
+    const next = {
+      pieces: { X: pos.pieces.X.map(p=>({...p})), O: pos.pieces.O.map(p=>({...p})) },
+      turn: pos.turn,
+      phase: pos.phase,
+    };
+    if (move.type === 'place') next.pieces[player].push({r:move.r, c:move.c});
+    else next.pieces[player][move.idx] = {r:move.r, c:move.c};
+
+    if (findWinLineOf(next, player)){
+      next.phase = 'over';
+    } else {
+      const total = next.pieces.X.length + next.pieces.O.length;
+      if (next.phase==='placing' && total===6) next.phase='moving';
+      next.turn = player==='X' ? 'O' : 'X';
+    }
+    return next;
+  }
+
+  // rough positional score: pairs of a player's own pieces that sit rank-adjacent
+  // along a line direction (a two-in-a-row-in-progress), used only as a depth-cutoff
+  // tiebreaker — actual wins/losses are always found exactly via findWinLineOf.
+  function heuristicPairs(pos, player){
+    const all = otherCellsOf(pos, null, -1);
+    const rows = distinctSorted(all.map(p=>p.r));
+    const cols = distinctSorted(all.map(p=>p.c));
+    const pts = pos.pieces[player].map(p=>({r:rows.indexOf(p.r), c:cols.indexOf(p.c)}));
+    const dirs = [{r:0,c:1},{r:1,c:0},{r:1,c:1},{r:1,c:-1}];
+    let score = 0;
+    for (let i=0;i<pts.length;i++){
+      for (let j=i+1;j<pts.length;j++){
+        const dr=pts[j].r-pts[i].r, dc=pts[j].c-pts[i].c;
+        if (dirs.some(d=>d.r===dr&&d.c===dc)) score += 2;
+      }
+    }
+    return score;
+  }
+
+  // depth is "plies of lookahead remaining" — folding it into the win/loss score
+  // makes a win found sooner (more depth left) score higher than one found later,
+  // so the AI prefers the fastest forced win instead of an arbitrary equal one.
+  function scorePosition(pos, aiPlayer, depth){
+    const human = aiPlayer==='X' ? 'O' : 'X';
+    if (findWinLineOf(pos, aiPlayer)) return 1000 + depth;
+    if (findWinLineOf(pos, human)) return -1000 - depth;
+    return heuristicPairs(pos, aiPlayer) - heuristicPairs(pos, human);
+  }
+
+  function minimax(pos, depth, alpha, beta, aiPlayer){
+    if (pos.phase==='over' || depth===0) return scorePosition(pos, aiPlayer, depth);
+    const mover = pos.turn;
+    const moves = legalMovesFor(pos, mover);
+    if (!moves.length) return scorePosition(pos, aiPlayer, depth);
+    const maximizing = mover === aiPlayer;
+    let best = maximizing ? -Infinity : Infinity;
+    for (const mv of moves){
+      const next = applyMove(pos, mover, mv);
+      const val = minimax(next, depth-1, alpha, beta, aiPlayer);
+      if (maximizing){
+        if (val>best) best=val;
+        alpha = Math.max(alpha, best);
+      } else {
+        if (val<best) best=val;
+        beta = Math.min(beta, best);
+      }
+      if (beta<=alpha) break;
+    }
+    return best;
+  }
+
+  function pickAiMove(pos, aiPlayer){
+    const moves = legalMovesFor(pos, aiPlayer);
+    if (!moves.length) return null;
+    let bestVal = -Infinity, bestMoves = [];
+    for (const mv of moves){
+      const next = applyMove(pos, aiPlayer, mv);
+      const val = minimax(next, AI_DEPTH-1, -Infinity, Infinity, aiPlayer);
+      if (val>bestVal){ bestVal=val; bestMoves=[mv]; }
+      else if (val===bestVal){ bestMoves.push(mv); }
+    }
+    return bestMoves[Math.floor(Math.random()*bestMoves.length)];
+  }
+
+  function isAiTurn(){ return mode==='ai' && state.turn!==humanPlayer && state.phase!=='over'; }
+
+  function maybeTriggerAi(){
+    if (!isAiTurn()) return;
+    setTimeout(()=>{
+      if (!isAiTurn()) return;
+      const mv = pickAiMove(state, state.turn);
+      if (!mv) return;
+      if (mv.type==='place') state.pieces[state.turn].push({r:mv.r, c:mv.c});
+      else state.pieces[state.turn][mv.idx] = {r:mv.r, c:mv.c};
+      afterMove();
+    }, 450);
+  }
+
   function afterMove(){
     const line = findWinLine(state.turn);
     if (line){
@@ -531,21 +704,25 @@
     state.selected = null;
     state.turn = state.turn==='X' ? 'O' : 'X';
     render();
+    maybeTriggerAi();
   }
 
   function handlePlace(r,c){
+    if (isAiTurn()) return;
     if (!isLegal(r,c,null,-1)) return;
     state.pieces[state.turn].push({r,c});
     afterMove();
   }
 
   function handleSelect(player, idx){
+    if (isAiTurn()) return;
     if (state.phase!=='moving' || player!==state.turn) return;
     state.selected = (state.selected===idx) ? null : idx;
     render();
   }
 
   function handleMoveTarget(r,c){
+    if (isAiTurn()) return;
     if (state.selected==null) return;
     const self = state.pieces[state.turn][state.selected];
     if (r===self.r && c===self.c) return;
@@ -605,7 +782,7 @@
         const isSelfCell = selfPos && r===selfPos.r && c===selfPos.c;
         const isEmpty = !isOccupied(r,c,occupied) && !isSelfCell;
         let legal = false;
-        if (state.phase!=='over' && isEmpty){
+        if (state.phase!=='over' && isEmpty && !isAiTurn()){
           if (placing) legal = isLegal(r,c,null,-1);
           else if (selecting) legal = isLegal(r,c,state.turn,state.selected);
         }
@@ -632,7 +809,7 @@
         if (!rLane || !cLane){ el.style.opacity='0'; continue; }
         el.style.opacity = '1';
         el.style.transform = `translate(${cLane.offset}px, ${rLane.offset}px)`;
-        const canSelect = state.phase==='moving' && p===state.turn;
+        const canSelect = state.phase==='moving' && p===state.turn && !isAiTurn();
         el.classList.toggle('selectable', canSelect);
         el.classList.toggle('selected', isLifted);
         el.classList.toggle('lifted', isLifted);
@@ -658,20 +835,25 @@
 
     turnPillEl.className = 'turn-pill ' + state.turn.toLowerCase();
     turnDotEl.className = 'turn-dot' + (state.turn==='X' ? ' is-x' : '');
-    if (state.phase==='placing'){
+    const actor = mode==='ai' ? (state.turn===humanPlayer ? 'Tú' : 'la máquina') : state.turn;
+    if (isAiTurn()){
+      turnTextEl.innerHTML = `<b>La máquina</b> está pensando…`;
+    } else if (state.phase==='placing'){
       const n = state.pieces[state.turn].length + 1;
-      turnTextEl.innerHTML = `Turno de <b>${state.turn}</b> — coloca ficha ${n}/3`;
+      turnTextEl.innerHTML = `Turno de <b>${actor}</b> — coloca ficha ${n}/3`;
     } else if (state.phase==='moving'){
       turnTextEl.innerHTML = state.selected==null
-        ? `Turno de <b>${state.turn}</b> — elige una ficha para mover`
-        : `Turno de <b>${state.turn}</b> — elige casilla destino`;
+        ? `Turno de <b>${actor}</b> — elige una ficha para mover`
+        : `Turno de <b>${actor}</b> — elige casilla destino`;
     } else {
       turnTextEl.innerHTML = `Partida terminada`;
     }
 
     if (state.phase==='over'){
       overlayEl.classList.add('show');
-      winTitleEl.textContent = `${state.winner} gana`;
+      winTitleEl.textContent = mode==='ai'
+        ? (state.winner===humanPlayer ? '¡Has ganado!' : 'Gana la máquina')
+        : `${state.winner} gana`;
       winTitleEl.className = 'win-title ' + state.winner.toLowerCase();
     } else {
       overlayEl.classList.remove('show');
@@ -686,6 +868,21 @@
     state = freshState();
     render();
   });
+
+  const modePvpBtn = document.getElementById('modePvpBtn');
+  const modeAiBtn = document.getElementById('modeAiBtn');
+  function setMode(m){
+    if (mode===m) return;
+    mode = m;
+    modePvpBtn.classList.toggle('active', m==='pvp');
+    modePvpBtn.setAttribute('aria-pressed', String(m==='pvp'));
+    modeAiBtn.classList.toggle('active', m==='ai');
+    modeAiBtn.setAttribute('aria-pressed', String(m==='ai'));
+    state = freshState();
+    render();
+  }
+  modePvpBtn.addEventListener('click', ()=> setMode('pvp'));
+  modeAiBtn.addEventListener('click', ()=> setMode('ai'));
 
   let hintsOn = true;
   const hintsBtn = document.getElementById('hintsBtn');
