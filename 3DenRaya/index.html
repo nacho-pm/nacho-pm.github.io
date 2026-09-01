@@ -181,6 +181,9 @@
   }
   button.reset:hover{ border-color:var(--accent-gold); color:var(--ink); }
   button.reset:focus-visible{ outline:2px solid var(--accent-gold); outline-offset:2px; }
+  button.reset[aria-pressed="false"]{ border-color:var(--accent-gold); color:var(--accent-gold); }
+
+  .status-actions{ display:flex; gap:8px; flex-wrap:wrap; }
 
   .board-card{
     background:var(--surface);
@@ -248,6 +251,8 @@
   }
   .cell.legal:hover::after{ opacity:.7; transform:scale(1.7); }
   .cell.legal:focus-visible{ outline:2px solid var(--accent-gold); outline-offset:-2px; }
+  .viewport.hints-off .cell.legal::after,
+  .viewport.hints-off .cell.legal:hover::after{ opacity:0; transform:none; }
 
   .token{
     position:absolute;
@@ -369,7 +374,10 @@
       <span class="turn-dot" id="turnDot"></span>
       <span class="turn-text" id="turnText"></span>
     </div>
-    <button class="reset" id="resetBtn" type="button">Reiniciar partida</button>
+    <div class="status-actions">
+      <button class="reset" id="hintsBtn" type="button" aria-pressed="true">Ocultar pistas</button>
+      <button class="reset" id="resetBtn" type="button">Reiniciar partida</button>
+    </div>
   </div>
 
   <div class="board-card">
@@ -678,6 +686,19 @@
     state = freshState();
     render();
   });
+
+  let hintsOn = true;
+  const hintsBtn = document.getElementById('hintsBtn');
+  function applyHints(){
+    viewportEl.classList.toggle('hints-off', !hintsOn);
+    hintsBtn.textContent = hintsOn ? 'Ocultar pistas' : 'Mostrar pistas';
+    hintsBtn.setAttribute('aria-pressed', String(hintsOn));
+  }
+  hintsBtn.addEventListener('click', ()=>{
+    hintsOn = !hintsOn;
+    applyHints();
+  });
+  applyHints();
 
   render();
 })();
